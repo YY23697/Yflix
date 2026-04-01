@@ -1,9 +1,8 @@
-const API_KEY = "984fa8ab0d7f1d932161fbb4383cdd58";
-const API_URL = "https://api.themoviedb.org/3/movie/popular";
-const TV_API_URL = "https://api.themoviedb.org/3/tv/popular";
-const SEARCH_API_URL = "https://api.themoviedb.org/3/search/movie";
-const MOVIE_VIDEO_API_BASE_URL = "https://api.themoviedb.org/3/movie";
-const TV_VIDEO_API_BASE_URL = "https://api.themoviedb.org/3/tv";
+const API_URL_PATH = "/3/movie/popular";
+const TV_API_URL_PATH = "/3/tv/popular";
+const SEARCH_API_URL_PATH = "/3/search/movie";
+const MOVIE_VIDEO_API_BASE_PATH = "/3/movie";
+const TV_VIDEO_API_BASE_PATH = "/3/tv";
 const IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500";
 const PAGE_SIZE = 10;
 const FETCH_PAGES = 5;
@@ -42,46 +41,61 @@ const tvDetailsCache = new Map();
 let allTvShows = [];
 let tvCurrentPage = 0;
 
-async function fetchPopularMovies() {
-  const requests = Array.from({ length: FETCH_PAGES }, (_, index) => {
-    const page = index + 1;
-    const requestUrl = `${API_URL}?api_key=${API_KEY}&language=ko-KR&page=${page}`;
-    return fetch(requestUrl).then((response) => {
-      if (!response.ok) {
-        throw new Error(`API 요청 실패: ${response.status}`);
-      }
-      return response.json();
-    });
+async function tmdbRequest(path, params = {}) {
+  const query = new URLSearchParams({ path });
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      query.set(key, String(value));
+    }
   });
 
-  const pages = await Promise.all(requests);
-  return pages.flatMap((pageData) => pageData.results || []);
+  const url = `/api/tmdb?${query.toString()}`;
+  let lastMessage = "";
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await fetch(url);
+    const data = await response.json().catch(() => ({}));
+    lastMessage = data.status_message || data.error || "";
+
+    if (response.status === 429 && attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(lastMessage || `요청 실패 (${response.status})`);
+    }
+    return data;
+  }
+
+  throw new Error(lastMessage || "요청 재시도 한도를 초과했습니다.");
+}
+
+async function fetchPopularMovies() {
+  const merged = [];
+  for (let page = 1; page <= FETCH_PAGES; page += 1) {
+    const data = await tmdbRequest(API_URL_PATH, { language: "ko-KR", page });
+    merged.push(...(data.results || []));
+    if (page < FETCH_PAGES) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  return merged;
 }
 
 async function fetchPopularTv() {
-  const requestUrl = `${TV_API_URL}?api_key=${API_KEY}&language=ko-KR&page=1`;
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    throw new Error(`TV API 요청 실패: ${response.status}`);
-  }
-  const data = await response.json();
+  const data = await tmdbRequest(TV_API_URL_PATH, { language: "ko-KR", page: 1 });
   return (data.results || []).slice(0, TV_TOP_COUNT);
 }
 
 async function searchMovies(query) {
-  const requests = Array.from({ length: SEARCH_FETCH_PAGES }, (_, index) => {
-    const page = index + 1;
-    const requestUrl = `${SEARCH_API_URL}?api_key=${API_KEY}&language=ko-KR&page=${page}&query=${encodeURIComponent(query)}`;
-    return fetch(requestUrl).then((response) => {
-      if (!response.ok) {
-        throw new Error(`검색 API 요청 실패: ${response.status}`);
-      }
-      return response.json();
-    });
-  });
-
-  const pages = await Promise.all(requests);
-  return pages.flatMap((pageData) => pageData.results || []);
+  const settled = await Promise.allSettled(
+    Array.from({ length: SEARCH_FETCH_PAGES }, (_, index) =>
+      tmdbRequest(SEARCH_API_URL_PATH, { language: "ko-KR", page: index + 1, query })
+    )
+  );
+  return settled
+    .filter((item) => item.status === "fulfilled")
+    .flatMap((item) => item.value.results || []);
 }
 
 async function fetchMovieTrailerKey(movieId) {
@@ -93,23 +107,22 @@ async function fetchMovieTrailerKey(movieId) {
   let key = null;
 
   for (const language of languages) {
-    const langQuery = language ? `&language=${language}` : "";
-    const requestUrl = `${MOVIE_VIDEO_API_BASE_URL}/${movieId}/videos?api_key=${API_KEY}${langQuery}`;
-    const response = await fetch(requestUrl);
-    if (!response.ok) {
-      throw new Error(`예고편 API 요청 실패: ${response.status}`);
-    }
+    try {
+      const data = await tmdbRequest(`${MOVIE_VIDEO_API_BASE_PATH}/${movieId}/videos`, {
+        language: language || undefined,
+      });
+      const results = data.results || [];
+      const trailer =
+        results.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official) ||
+        results.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
+        results.find((video) => video.site === "YouTube" && video.type === "Teaser");
 
-    const data = await response.json();
-    const results = data.results || [];
-    const trailer =
-      results.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official) ||
-      results.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
-      results.find((video) => video.site === "YouTube" && video.type === "Teaser");
-
-    if (trailer?.key) {
-      key = trailer.key;
-      break;
+      if (trailer?.key) {
+        key = trailer.key;
+        break;
+      }
+    } catch {
+      /* 다음 언어로 재시도 */
     }
   }
 
@@ -126,23 +139,22 @@ async function fetchTvTrailerKey(seriesId) {
   let key = null;
 
   for (const language of languages) {
-    const langQuery = language ? `&language=${language}` : "";
-    const requestUrl = `${TV_VIDEO_API_BASE_URL}/${seriesId}/videos?api_key=${API_KEY}${langQuery}`;
-    const response = await fetch(requestUrl);
-    if (!response.ok) {
-      throw new Error(`TV 예고편 API 요청 실패: ${response.status}`);
-    }
+    try {
+      const data = await tmdbRequest(`${TV_VIDEO_API_BASE_PATH}/${seriesId}/videos`, {
+        language: language || undefined,
+      });
+      const results = data.results || [];
+      const trailer =
+        results.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official) ||
+        results.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
+        results.find((video) => video.site === "YouTube" && video.type === "Teaser");
 
-    const data = await response.json();
-    const results = data.results || [];
-    const trailer =
-      results.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official) ||
-      results.find((video) => video.site === "YouTube" && video.type === "Trailer") ||
-      results.find((video) => video.site === "YouTube" && video.type === "Teaser");
-
-    if (trailer?.key) {
-      key = trailer.key;
-      break;
+      if (trailer?.key) {
+        key = trailer.key;
+        break;
+      }
+    } catch {
+      /* 다음 언어로 재시도 */
     }
   }
 
@@ -154,12 +166,7 @@ async function fetchMovieDetails(movieId) {
   if (movieDetailsCache.has(movieId)) {
     return movieDetailsCache.get(movieId);
   }
-  const requestUrl = `${MOVIE_VIDEO_API_BASE_URL}/${movieId}?api_key=${API_KEY}&language=ko-KR`;
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    throw new Error(`영화 상세 API 요청 실패: ${response.status}`);
-  }
-  const data = await response.json();
+  const data = await tmdbRequest(`${MOVIE_VIDEO_API_BASE_PATH}/${movieId}`, { language: "ko-KR" });
   movieDetailsCache.set(movieId, data);
   return data;
 }
@@ -168,12 +175,9 @@ async function fetchMovieImages(movieId) {
   if (movieImagesCache.has(movieId)) {
     return movieImagesCache.get(movieId);
   }
-  const requestUrl = `${MOVIE_VIDEO_API_BASE_URL}/${movieId}/images?api_key=${API_KEY}&include_image_language=ko,null,en`;
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    throw new Error(`영화 이미지 API 요청 실패: ${response.status}`);
-  }
-  const data = await response.json();
+  const data = await tmdbRequest(`${MOVIE_VIDEO_API_BASE_PATH}/${movieId}/images`, {
+    include_image_language: "ko,null,en",
+  });
   movieImagesCache.set(movieId, data);
   return data;
 }
@@ -182,12 +186,7 @@ async function fetchTvDetails(seriesId) {
   if (tvDetailsCache.has(seriesId)) {
     return tvDetailsCache.get(seriesId);
   }
-  const requestUrl = `${TV_VIDEO_API_BASE_URL}/${seriesId}?api_key=${API_KEY}&language=ko-KR`;
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    throw new Error(`TV 상세 API 요청 실패: ${response.status}`);
-  }
-  const data = await response.json();
+  const data = await tmdbRequest(`${TV_VIDEO_API_BASE_PATH}/${seriesId}`, { language: "ko-KR" });
   tvDetailsCache.set(seriesId, data);
   return data;
 }
@@ -239,6 +238,21 @@ function openTvModalContent({ details, trailerKey }) {
   document.body.classList.add("modal-open");
 }
 
+function openErrorModal(message) {
+  movieModalTitle.textContent = "알림";
+  movieModalMeta.textContent = "";
+  movieModalGenres.textContent = "";
+  movieModalOverview.textContent = message;
+  movieModalMedia.innerHTML = "";
+  const errorBox = document.createElement("div");
+  errorBox.className = "state-message error";
+  errorBox.textContent = message;
+  movieModalMedia.appendChild(errorBox);
+  movieModal.classList.add("is-open");
+  movieModal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+}
+
 function stopTrailerPreview(card) {
   if (card.previewTimer) {
     clearTimeout(card.previewTimer);
@@ -252,15 +266,21 @@ function setupMoviePreview(card, movieId) {
     card.previewTimer = setTimeout(async () => {
       try {
         if (!card.matches(":hover")) return;
-        const [details, images, trailerKey] = await Promise.all([
-          fetchMovieDetails(movieId),
+        const details = await fetchMovieDetails(movieId);
+        const [imagesResult, trailerResult] = await Promise.allSettled([
           fetchMovieImages(movieId),
           fetchMovieTrailerKey(movieId),
         ]);
         if (!card.matches(":hover")) return;
+        const images =
+          imagesResult.status === "fulfilled" ? imagesResult.value : { backdrops: [], posters: [] };
+        const trailerKey = trailerResult.status === "fulfilled" ? trailerResult.value : null;
         openMovieModalContent({ details, images, trailerKey });
       } catch (error) {
         console.error(error);
+        if (card.matches(":hover")) {
+          openErrorModal(error.message || "정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+        }
       }
     }, 1000);
   });
@@ -276,11 +296,20 @@ function setupTvPreview(card, seriesId) {
     card.previewTimer = setTimeout(async () => {
       try {
         if (!card.matches(":hover")) return;
-        const [details, trailerKey] = await Promise.all([fetchTvDetails(seriesId), fetchTvTrailerKey(seriesId)]);
+        const details = await fetchTvDetails(seriesId);
+        let trailerKey = null;
+        try {
+          trailerKey = await fetchTvTrailerKey(seriesId);
+        } catch (trailerError) {
+          console.warn(trailerError);
+        }
         if (!card.matches(":hover")) return;
         openTvModalContent({ details, trailerKey });
       } catch (error) {
         console.error(error);
+        if (card.matches(":hover")) {
+          openErrorModal(error.message || "정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+        }
       }
     }, 1000);
   });
