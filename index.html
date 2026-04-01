@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Movie Popular Chart</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="hero-header">
+          <div>
+            <a id="homeLink" class="brand-link" href="#" aria-label="홈으로 이동">
+              <span class="brand">Yflix</span>
+            </a>
+            <h1>지금 인기있는 콘텐츠</h1>
+            <p class="subtitle"></p>
+          </div>
+          <form id="searchForm" class="search-form" role="search" aria-label="영화 검색">
+            <input id="searchInput" type="text" placeholder="영화 제목 검색" />
+            <button type="submit" class="search-button" aria-label="영화 검색">
+              <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="2" />
+                <path d="M15 15l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="chart-section">
+        <h2 id="sectionTitle" class="section-title">인기 영화 TOP 20</h2>
+        <div class="carousel-wrap">
+          <button id="prevButton" class="nav-button nav-left" aria-label="이전 10개 보기">‹</button>
+          <div id="movieGrid" class="movie-grid" aria-live="polite"></div>
+          <button id="nextButton" class="nav-button nav-right" aria-label="다음 10개 보기">›</button>
+        </div>
+      </section>
+
+      <section class="chart-section chart-section-tv">
+        <h2 class="section-title">인기 TV시리즈 TOP 20</h2>
+        <div class="carousel-wrap">
+          <button id="tvPrevButton" class="nav-button nav-left" aria-label="TV 이전 10개 보기">‹</button>
+          <div id="tvGrid" class="movie-grid" aria-live="polite"></div>
+          <button id="tvNextButton" class="nav-button nav-right" aria-label="TV 다음 10개 보기">›</button>
+        </div>
+      </section>
+    </main>
+
+    <template id="movieCardTemplate">
+      <article class="movie-card">
+        <div class="rank-badge"></div>
+        <img class="movie-poster" alt="" loading="lazy" />
+      </article>
+    </template>
+
+    <div id="movieModal" class="movie-modal" aria-hidden="true">
+      <div id="movieModalBackdrop" class="movie-modal-backdrop"></div>
+      <article class="movie-modal-card" role="dialog" aria-modal="true" aria-label="영화 상세 정보">
+        <button id="movieModalClose" class="movie-modal-close" aria-label="닫기">X</button>
+        <div id="movieModalMedia" class="movie-modal-media"></div>
+        <section class="movie-modal-info">
+          <h3 id="movieModalTitle"></h3>
+          <p id="movieModalMeta" class="movie-modal-meta"></p>
+          <p id="movieModalGenres" class="movie-modal-genres"></p>
+          <p id="movieModalOverview" class="movie-modal-overview"></p>
+        </section>
+      </article>
+    </div>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
